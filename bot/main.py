@@ -15,7 +15,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
     level=logging.INFO,
 )
-logging.getLogger("httpx").setLevel(logging.WARNING)
+for name in ("httpx", "httpx2"):
+    logging.getLogger(name).setLevel(logging.WARNING)
 log = logging.getLogger("llm-ops-bot")
 
 ALLOWED = filters.User(user_id=int(os.environ["ALLOWED_USER_ID"]))
