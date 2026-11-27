@@ -1,0 +1,18 @@
+[Unit]
+Description=LLM ops Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=botuser
+Group=botuser
+WorkingDirectory=/opt/llm-ops-bot/app
+EnvironmentFile=/etc/llm-ops-bot.env
+ExecStart=/opt/llm-ops-bot/app/venv/bin/python bot/main.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
