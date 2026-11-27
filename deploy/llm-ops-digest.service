@@ -1,0 +1,13 @@
+[Unit]
+Description=LLM ops bot daily digest
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=botuser
+Group=botuser
+WorkingDirectory=/opt/llm-ops-bot/app
+EnvironmentFile=/etc/llm-ops-bot.env
+ExecStart=/opt/llm-ops-bot/app/venv/bin/python bot/digest.py
+NoNewPrivileges=true
