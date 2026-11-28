@@ -1,80 +1,44 @@
 # llm-ops-bot
 
-A single-user Telegram bot that forwards messages to an LLM (Anthropic Claude), built and operated as a small production-style service: systemd-managed, hardened host, request log, daily digest and failure alerting.
+A small Telegram bot that sends my messages to an LLM (Claude) and replies with the answer. I built it to practise running a small service on a Linux server: deploying it, reading logs, and seeing what happens when something breaks.
 
-The bot's features are deliberately small. The point of the project is the operation around it: deployment, logging without leaking secrets, health reporting, and what happens when the model API fails.
+## What it does
 
-## Features
+- Plain text: sent to the model, the answer comes back in the chat.
+- `/summarise <text>`: summarises the text I paste (for example, log lines).
+- `/health`: uptime and the last 24 hours of requests (total, errors, average latency, tokens).
+- Only my own Telegram user ID can use it. Messages from anyone else are ignored.
+- Each request is saved in a local SQLite file: time, type, ok or error, latency, tokens, error code. The message text is never saved.
+- A daily summary is sent to me at 08:00 (Madrid time).
+- If the model API fails 3 times in a row, the bot sends me an alert (at most one per hour).
 
-| Input | Behaviour |
-|---|---|
-| plain text | Sent to the model; the answer comes back in the chat |
-| `/summarise <text>` | Summarises the pasted text (for example, log lines) |
-| `/health` | Uptime and the last 24 h of request statistics: total, errors, average latency, tokens, last request |
-| `/start` | Start message |
+## How I built it
 
-- Only one Telegram user ID (`ALLOWED_USER_ID`) is served. Messages from anyone else are ignored and logged.
-- Every model request is recorded in SQLite as metadata only: UTC timestamp, kind, success flag, latency, input and output tokens, error code. Message text is never stored.
-- A systemd timer sends a daily digest of the last 24 h at 08:00 Europe/Madrid.
-- After 3 consecutive model API errors the bot sends an alert to the owner, at most once per hour.
+I built this with Claude (Anthropic's AI assistant) as my guide. It helped me plan the structure, drafted parts of the code, and helped me work out what was going wrong when things broke. I ran, deployed and tested everything myself on an Ubuntu Server VM, and the problems listed below happened to me. I also used Claude to help draft these docs.
 
-## Design
+## Setup
 
-- **Long polling** (`getUpdates`): no inbound port, no webhook, no TLS certificate. The host firewall allows SSH only.
-- **Limits on the model call:** 500 output tokens, 4000 input characters, 30 s timeout, SDK retries 2 times (429, 5xx and connection errors; not 401).
-- **Secrets** live in environment variables only. In production they are in `/etc/llm-ops-bot.env` (root-owned, mode 600, read by systemd). The service runs as an unprivileged user (`botuser`: no shell, no sudo) with `NoNewPrivileges=true`.
-- **Logging:** the `httpx` and `httpx2` loggers are set to WARNING, because the Telegram Bot API URL contains the bot token and INFO-level request logging would write it to the journal (see [RUNBOOK.md](RUNBOOK.md), problem 4).
-- **Failure model:** an invalid model API key does not crash the process; it produces counted, logged `status_401` errors and, after the third in a row, an alert. See [docs/postmortem-001.md](docs/postmortem-001.md).
-
-## Repository layout
-
-```
-bot/
-  main.py       Telegram handlers, allowlist, polling loop
-  llm.py        Model call: limits, timeout, error classification
-  store.py      SQLite request log and statistics
-  digest.py     Daily digest, run by a systemd timer
-  alerts.py     Consecutive-error alerting
-deploy/
-  llm-ops-bot.service
-  llm-ops-digest.service
-  llm-ops-digest.timer
-docs/
-  postmortem-001.md
-.env.example
-requirements.txt
-RUNBOOK.md
-CHANGELOG.md
-```
-
-## Configuration
-
-| Variable | Required | Meaning |
-|---|---|---|
-| `TELEGRAM_BOT_TOKEN` | yes | Bot token from @BotFather |
-| `ALLOWED_USER_ID` | yes | Numeric Telegram user ID that may use the bot |
-| `LLM_API_KEY` | yes | Anthropic API key |
-| `LLM_MODEL` | no | Model name; default `claude-haiku-5-5` |
-| `DB_PATH` | no | SQLite file; default `<repo>/bot.db` |
-
-No quotes, no spaces and no placeholder values. A placeholder such as `...` makes the service exit at startup.
-
-## Run locally
+Run locally (Windows PowerShell; on Linux use `cp` and `source venv/bin/activate`):
 
 ```
 python -m venv venv
-venv\Scripts\Activate.ps1          # Windows PowerShell; on Linux: source venv/bin/activate
+venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-copy .env.example .env             # Linux: cp .env.example .env ; then fill in the values
+copy .env.example .env
 python bot/main.py
 ```
 
-- Only one process may poll a given bot token. Stop any deployed instance first.
-- `load_dotenv()` does not override variables already set in the environment. A stale variable in the terminal wins over `.env`.
+Fill in `.env` first. Only one process can poll a bot token at a time, so stop any deployed copy before running locally.
 
-## Deploy on Ubuntu Server 24.04
+| Variable | Meaning |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Token from @BotFather |
+| `ALLOWED_USER_ID` | My numeric Telegram user ID |
+| `LLM_API_KEY` | Anthropic API key |
+| `LLM_MODEL` | Optional. Default `claude-haiku-5-5` |
+| `DB_PATH` | Optional. Default `<repo>/bot.db` |
 
-Assumes a host with SSH key login, `ufw` allowing only SSH, and outbound HTTPS. Host hardening steps are in [RUNBOOK.md](RUNBOOK.md).
+Deploy on Ubuntu Server 24.04 (the bot uses polling, so no port needs to be open except SSH):
 
 ```
 sudo apt update && sudo apt install -y git python3-venv python3-pip
@@ -82,52 +46,35 @@ sudo adduser --system --group --home /opt/llm-ops-bot --shell /usr/sbin/nologin 
 sudo -u botuser git clone https://github.com/argentedev/llm-ops-bot.git /opt/llm-ops-bot/app
 sudo -u botuser python3 -m venv /opt/llm-ops-bot/app/venv
 sudo -u botuser /opt/llm-ops-bot/app/venv/bin/pip install -r /opt/llm-ops-bot/app/requirements.txt
-```
-
-Create the secrets file with an editor (not `echo`, to keep secrets out of shell history):
-
-```
-sudo nano /etc/llm-ops-bot.env       # the three required variables, one per line
-sudo chown root:root /etc/llm-ops-bot.env
-sudo chmod 600 /etc/llm-ops-bot.env
-sudo awk -F= '{print $1 " -> " length($2) " characters"}' /etc/llm-ops-bot.env
-```
-
-Expected: three variables, none with a length of 3 (the length of the `...` placeholder).
-
-Install and start the units:
-
-```
+sudo nano /etc/llm-ops-bot.env        # the three variables, no quotes, no spaces
+sudo chown root:root /etc/llm-ops-bot.env && sudo chmod 600 /etc/llm-ops-bot.env
 cd /opt/llm-ops-bot/app/deploy
 sudo cp llm-ops-bot.service llm-ops-digest.service llm-ops-digest.timer /etc/systemd/system/
-wc -c /etc/systemd/system/llm-ops-*      # every file must be larger than 0
+wc -c /etc/systemd/system/llm-ops-*    # none of them should be 0 bytes
 sudo systemctl daemon-reload
 sudo systemctl enable --now llm-ops-bot llm-ops-digest.timer
-systemctl status llm-ops-bot --no-pager | head -n 5
 ```
 
-An empty unit file is treated by systemd as masked, hence the `wc -c` check.
+Then send the bot a message and `/health` to check it works.
 
-Smoke test from Telegram: send a plain message (expect an answer) and `/health` (expect uptime and statistics).
+## Things that went wrong
 
-## Verified behaviour
+- **Bot token in the logs.** The HTTP library logs request URLs, and the Telegram URL contains the token. I revoked the token, rotated it, and turned that logging down to warnings only.
+- **"Unit is masked".** I had committed the systemd service file empty. systemd treats an empty unit file as masked. I now run `git diff --cached --stat` before every commit.
+- **Restart loop.** I left `...` as a placeholder in the server's env file, which crashed the bot at startup. I now check the length of each variable without printing it.
+- **A test that did nothing.** I tried to simulate a bad API key by setting a variable in the terminal, but I had started the bot with the editor's run button, which ignores it. Typing the command in the terminal fixed it.
 
-- The service restarts by itself after `kill -9` (new PID within about 6 s) and starts on boot without manual action.
-- `/health` totals match a direct SQL query on the database.
-- The daily digest timer fires and the digest arrives.
-- With an invalid API key every request is logged as `status_401`; the alert is sent on the third consecutive error and not on the following one in the same hour (alert verified locally end to end; see the postmortem for the exact scope).
+## What I tested
 
-## Known limitations
+- `kill -9` on the process: systemd restarted it.
+- Reboot: the bot started on its own.
+- `/health` numbers match a direct SQL query on the database.
+- Bad API key: see [docs/postmortem-001.md](docs/postmortem-001.md).
 
-- Alert state (counter and cooldown) lives in process memory and resets when the service restarts.
-- No recovery notice after an alert.
-- The alert depends on the bot itself: it cannot detect a hung process or a Telegram-side outage.
-- `/health` does not show the error code; the journal and SQLite do.
-- One user, one process.
-- No automated test suite. Verification is manual and recorded in [CHANGELOG.md](CHANGELOG.md) and the postmortem.
+## Limits
 
-## Documentation
+- The alert counter lives in memory, so it resets when the service restarts.
+- The alert is sent through the bot, so it can't report that the bot itself is hung.
+- There are no automated tests. I tested by hand.
 
-- [RUNBOOK.md](RUNBOOK.md): operation, alert triage, secret handling, known problems.
-- [CHANGELOG.md](CHANGELOG.md): milestones.
-- [docs/postmortem-001.md](docs/postmortem-001.md): fault-injection drill with an invalid model API key.
+More: [RUNBOOK.md](RUNBOOK.md) for the commands I use, [CHANGELOG.md](CHANGELOG.md) for the build order.
