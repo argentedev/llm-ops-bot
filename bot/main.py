@@ -1,6 +1,8 @@
 import logging
 import os
 import time
+import store, llm
+import alerts
 
 from dotenv import load_dotenv
 from telegram import Update
@@ -8,8 +10,6 @@ from telegram.constants import ChatAction
 from telegram.ext import (
     Application, CommandHandler, ContextTypes, MessageHandler, filters,
 )
-
-import store
 from llm import SUMMARISE_PROMPT, DEFAULT_PROMPT, ask
 
 load_dotenv()
@@ -34,6 +34,9 @@ async def _answer(update, context, kind, text, system_prompt=DEFAULT_PROMPT) -> 
     store.log_request(
         kind, result.ok, result.latency_ms, result.in_tokens, result.out_tokens, result.error
     )
+    alert = alerts.register(result.ok, result.error)
+    if alert:
+        await update.message.reply_text(alert)
     await update.message.reply_text(result.text)
 
 
