@@ -1,9 +1,13 @@
+# systemd unit that sends the daily digest. I do not enable it myself:
+# llm-ops-digest.timer starts it every day. I can also run it by hand: sudo systemctl start llm-ops-digest.service
+
 [Unit]
 Description=LLM ops bot daily digest
 After=network-online.target
 Wants=network-online.target
 
 [Service]
+# oneshot = runs once and exits; systemd treats it as finished when the command ends.
 Type=oneshot
 User=botuser
 Group=botuser

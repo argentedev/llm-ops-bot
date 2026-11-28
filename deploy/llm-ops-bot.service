@@ -1,18 +1,31 @@
+# systemd unit for the bot. Copy it to /etc/systemd/system/, then: daemon-reload, enable --now.
+# Check the copy is not 0 bytes: systemd treats an empty unit file as masked.
+
 [Unit]
 Description=LLM ops Telegram bot
+# Start after the network is up (the bot needs the internet to poll Telegram).
 After=network-online.target
 Wants=network-online.target
 
 [Service]
+# simple = the process started by ExecStart is the service itself.
 Type=simple
+# Run as the unprivileged user I created (no shell, no sudo), not as root.
 User=botuser
 Group=botuser
+# Folder the command runs from. This is why ExecStart can use the relative path bot/main.py.
 WorkingDirectory=/opt/llm-ops-bot/app
+# File with the three secrets. Only root can read it (mode 600); systemd reads it before dropping to botuser.
 EnvironmentFile=/etc/llm-ops-bot.env
+# The venv's python, so it uses the installed packages.
 ExecStart=/opt/llm-ops-bot/app/venv/bin/python bot/main.py
+# Restart if it crashes or is killed (exit code not 0), but not if I stop it with systemctl stop.
 Restart=on-failure
+# Wait 5 seconds before restarting.
 RestartSec=5
+# The process cannot gain extra privileges (for example through setuid programs).
 NoNewPrivileges=true
 
 [Install]
+# "enable" makes it start on boot, in the normal multi-user boot target.
 WantedBy=multi-user.target

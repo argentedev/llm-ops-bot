@@ -1,9 +1,16 @@
+# systemd timer that triggers llm-ops-digest.service (same name, so no Unit= line is needed).
+# Enable the timer, not the service: sudo systemctl enable --now llm-ops-digest.timer
+# Check the next run with: systemctl list-timers llm-ops-digest.timer
+
 [Unit]
 Description=Run the LLM ops digest every day
 
 [Timer]
+# Every day at 08:00, Madrid time (the server itself runs in UTC).
 OnCalendar=*-*-* 08:00:00 Europe/Madrid
+# If the server was off at 08:00, run the missed one when it boots.
 Persistent=true
 
 [Install]
+# Makes the timer start on boot.
 WantedBy=timers.target
